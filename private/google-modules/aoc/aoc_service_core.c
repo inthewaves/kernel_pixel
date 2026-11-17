@@ -14,8 +14,6 @@
 extern enum AOC_FW_STATE aoc_state;
 extern struct aoc_control_block *aoc_control;
 
-static void signal_aoc(struct mbox_chan *channel);
-
 ssize_t aoc_service_read_timeout(struct aoc_service_dev *dev, uint8_t *buffer,
 				 size_t count, long timeout)
 {
@@ -192,7 +190,7 @@ ssize_t aoc_service_write(struct aoc_service_dev *dev, const uint8_t *buffer,
 					buffer, count);
 
 	if (!aoc_service_is_ring(service) || aoc_ring_is_push(service))
-		signal_aoc(prvdata->mbox_channels[interrupt].channel);
+		aoc_signal_mbox(&prvdata->mbox_channels[interrupt]);
 err:
 	atomic_dec(&prvdata->aoc_process_active);
 	if (ret < 0)
@@ -274,7 +272,7 @@ ssize_t aoc_service_write_timeout(struct aoc_service_dev *dev, const uint8_t *bu
 					buffer, count);
 
 	if (!aoc_service_is_ring(service) || aoc_ring_is_push(service))
-		signal_aoc(prvdata->mbox_channels[interrupt].channel);
+		aoc_signal_mbox(&prvdata->mbox_channels[interrupt]);
 
 err:
 	atomic_dec(&prvdata->aoc_process_active);
@@ -507,7 +505,7 @@ ssize_t aoc_service_read(struct aoc_service_dev *dev, uint8_t *buffer,
 	 * there is now space available to write.
 	 */
 	if (was_full)
-		signal_aoc(prvdata->mbox_channels[interrupt].channel);
+		aoc_signal_mbox(&prvdata->mbox_channels[interrupt]);
 err:
 	atomic_dec(&prvdata->aoc_process_active);
 	if (ret < 0)
@@ -556,8 +554,3 @@ wait_queue_head_t *aoc_service_get_write_queue(struct aoc_service_dev *dev)
 	return &dev->write_queue;
 }
 EXPORT_SYMBOL_GPL(aoc_service_get_write_queue);
-
-static void signal_aoc(struct mbox_chan *channel)
-{
-	mbox_send_message(channel, NULL);
-}

@@ -342,6 +342,8 @@ static int allocate_mailbox_channels(struct aoc_prvdata *prv)
 
 	for (i = 0; i < prv->aoc_mbox_channels; i++) {
 		slot = &prv->mbox_channels[i];
+		slot->doorbell_pending = false;
+		slot->doorbell_again = false;
 		slot->channel = mbox_request_channel(&slot->client, i);
 		if (IS_ERR(slot->channel)) {
 			rc = PTR_ERR(slot->channel);
@@ -361,14 +363,24 @@ err_mbox_req:
 static void free_mailbox_channels(struct aoc_prvdata *prv)
 {
 	struct mbox_slot *slot;
+	struct mbox_chan *channel;
+	unsigned long flags;
 	int i;
 
 	for (i = 0; i < prv->aoc_mbox_channels; i++) {
 		slot = &prv->mbox_channels[i];
-		if (slot->channel) {
-			mbox_free_channel(slot->channel);
-			slot->channel = NULL;
-		}
+		spin_lock_irqsave(&slot->doorbell_lock, flags);
+		channel = slot->channel;
+		slot->channel = NULL;
+		slot->doorbell_again = false;
+		spin_unlock_irqrestore(&slot->doorbell_lock, flags);
+
+		if (channel)
+			mbox_free_channel(channel);
+
+		spin_lock_irqsave(&slot->doorbell_lock, flags);
+		slot->doorbell_pending = false;
+		spin_unlock_irqrestore(&slot->doorbell_lock, flags);
 	}
 }
 
@@ -396,8 +408,60 @@ static void aoc_mbox_tx_prepare(struct mbox_client *cl, void *mssg)
 {
 }
 
+static void aoc_send_doorbell_locked(struct mbox_slot *slot)
+{
+	int ret;
+
+	slot->doorbell_pending = true;
+	slot->doorbell_again = false;
+	ret = mbox_send_message(slot->channel, NULL);
+	if (ret < 0) {
+		slot->doorbell_pending = false;
+		dev_err_ratelimited(slot->client.dev, "Failed to signal mailbox %d: %d\n",
+				    slot->index, ret);
+	} else if (slot->client.knows_txdone) {
+		/* WC accepts NULL doorbells without waiting for the pending bit to clear. */
+		mbox_client_txdone(slot->channel, 0);
+		slot->doorbell_pending = false;
+	}
+}
+
+void aoc_signal_mbox(struct mbox_slot *slot)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&slot->doorbell_lock, flags);
+	if (slot->channel) {
+		/* Coalesce notifications awaiting completion, not shared-memory messages. */
+		if (slot->doorbell_pending)
+			slot->doorbell_again = true;
+		else
+			aoc_send_doorbell_locked(slot);
+	}
+	spin_unlock_irqrestore(&slot->doorbell_lock, flags);
+}
+
 static void aoc_mbox_tx_done(struct mbox_client *cl, void *mssg, int r)
 {
+	struct mbox_slot *slot = container_of(cl, struct mbox_slot, client);
+	unsigned long flags;
+
+	/* Payload messages, including ramdump requests, retain normal TX completion. */
+	if (mssg)
+		return;
+
+	spin_lock_irqsave(&slot->doorbell_lock, flags);
+	slot->doorbell_pending = false;
+	if (r)
+		dev_err_ratelimited(cl->dev, "Mailbox %d notification failed: %d\n",
+				    slot->index, r);
+
+	if (!r && slot->doorbell_again && slot->channel &&
+	    READ_ONCE(aoc_state) == AOC_STATE_ONLINE)
+		aoc_send_doorbell_locked(slot);
+	else
+		slot->doorbell_again = false;
+	spin_unlock_irqrestore(&slot->doorbell_lock, flags);
 }
 
 extern int gs_chipid_get_ap_hw_tune_array(const u8 **array);
@@ -2574,6 +2638,8 @@ static int aoc_platform_probe(struct platform_device *pdev)
 		rc = -ENOMEM;
 		goto err_failed_prvdata_alloc;
 	}
+	for (i = 0; i < prvdata->aoc_mbox_channels; i++)
+		spin_lock_init(&prvdata->mbox_channels[i].doorbell_lock);
 
 	prvdata->dev = dev;
 	prvdata->disable_monitor_mode = 0;
@@ -2623,9 +2689,11 @@ static int aoc_platform_probe(struct platform_device *pdev)
 		prvdata->mbox_channels[i].client.dev = dev;
 		prvdata->mbox_channels[i].client.tx_block = false;
 		prvdata->mbox_channels[i].client.tx_tout = 100; /* 100ms timeout for tx */
-		prvdata->mbox_channels[i].client.knows_txdone = false;
+		/* Only the ramdump channel carries payloads requiring hardware completion. */
+		prvdata->mbox_channels[i].client.knows_txdone = i != AOC_RAMDUMP_MBOX_CHANNEL;
 		prvdata->mbox_channels[i].client.rx_callback = aoc_mbox_rx_callback;
-		prvdata->mbox_channels[i].client.tx_done = aoc_mbox_tx_done;
+		prvdata->mbox_channels[i].client.tx_done =
+			i == AOC_RAMDUMP_MBOX_CHANNEL ? aoc_mbox_tx_done : NULL;
 		prvdata->mbox_channels[i].client.tx_prepare = aoc_mbox_tx_prepare;
 
 		prvdata->mbox_channels[i].prvdata = prvdata;

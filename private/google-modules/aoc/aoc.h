@@ -17,6 +17,7 @@
 #include <linux/mailbox_client.h>
 #include <linux/platform_device.h>
 #include <linux/sizes.h>
+#include <linux/spinlock.h>
 #include <linux/timer.h>
 #include <soc/google/debug-snapshot.h>
 #include "aoc_ipc_core.h"
@@ -32,6 +33,7 @@
 #define MAX_DMIC_POWER_NUM 4
 #define AP_RESET_REASON_LENGTH 32
 #define MAX_FIRMWARE_LENGTH 128
+#define AOC_RAMDUMP_MBOX_CHANNEL 15
 
 #define AOC_S2MPU_CTRL0 0x0
 #define AOC_S2MPU_CTRL_PROTECTION_ENABLE_PER_VID_CLR 0x54
@@ -63,6 +65,9 @@ enum AOC_FW_STATE {
 struct mbox_slot {
 	struct mbox_client client;
 	struct mbox_chan *channel;
+	spinlock_t doorbell_lock;
+	bool doorbell_pending;
+	bool doorbell_again;
 	void *prvdata;
 	int index;
 };
@@ -263,6 +268,8 @@ void reset_sensor_power(struct aoc_prvdata *prvdata, bool is_init);
 void aoc_configure_hardware(struct aoc_prvdata *prvdata);
 
 void trigger_aoc_ramdump(struct aoc_prvdata *prvdata);
+
+void aoc_signal_mbox(struct mbox_slot *slot);
 
 bool aoc_create_dma_buf_heaps(struct aoc_prvdata *prvdata);
 
