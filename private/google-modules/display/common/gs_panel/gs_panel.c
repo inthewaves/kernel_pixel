@@ -1638,6 +1638,20 @@ static void gs_panel_post_power_on(struct gs_panel *ctx)
 		dev_dbg(ctx->dev, "set post power on\n");
 }
 
+/**
+ * gs_panel_mark_enabled_at_handoff() - Syncs handoff state to drm_panel component
+ * @ctx: gs_panel handle
+ * Normally, drm_panel_enable() and drm_panel_prepare() would handle the state
+ * of the drm_panel component; however, during handoff, we are provided with an
+ * already-running panel from the bootloader, so we need to manually update these
+ * states.
+ */
+static void gs_panel_mark_enabled_at_handoff(struct gs_panel *ctx)
+{
+	ctx->base.enabled = true;
+	ctx->base.prepared = true;
+}
+
 static void gs_panel_handoff(struct gs_panel *ctx)
 {
 	bool enabled = gpiod_get_raw_value(ctx->gpio.reset_gpio) > 0;
@@ -1647,6 +1661,7 @@ static void gs_panel_handoff(struct gs_panel *ctx)
 		ctx->panel_state = GPANEL_STATE_HANDOFF;
 		gs_panel_set_power_helper(ctx, true);
 		gs_panel_post_power_on(ctx);
+		gs_panel_mark_enabled_at_handoff(ctx);
 	} else {
 		ctx->panel_state = GPANEL_STATE_UNINITIALIZED;
 		gpiod_direction_output(ctx->gpio.reset_gpio, 0);

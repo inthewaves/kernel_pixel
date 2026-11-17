@@ -208,6 +208,10 @@ static void gs_panel_bridge_enable(struct drm_bridge *bridge,
 
 	/* avoid turning on panel again if already enabled (ex. while booting or self refresh) */
 	if (!is_active) {
+		/* Failed handoff initialization still needs the normal enable path. */
+		if (ctx->panel_state == GPANEL_STATE_HANDOFF ||
+		    ctx->panel_state == GPANEL_STATE_HANDOFF_MODESET)
+			ctx->base.enabled = false;
 		drm_panel_enable(&ctx->base);
 		need_update_backlight = true;
 	}
