@@ -241,13 +241,17 @@ static void wc_mbox_shutdown(struct mbox_chan *chan)
 static bool wc_mbox_last_tx_done(struct mbox_chan *chan)
 {
 	struct wc_mbox_prvdata *prvdata = dev_get_drvdata(chan->mbox->dev);
+	int index = wc_mbox_channel_index(chan);
 	u32 status;
+
+	if (index < 0)
+		return false;
 
 	status = ioread32(prvdata->base + MB_INTSR0);
 	if (status != 0)
 		pr_debug("Pending status %x\n", status);
 
-	return status == 0;
+	return !(status & BIT(index));
 }
 
 static bool wc_mbox_peek_data(struct mbox_chan *chan)
