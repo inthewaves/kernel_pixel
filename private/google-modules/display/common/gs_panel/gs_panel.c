@@ -95,6 +95,18 @@ static int gs_panel_parse_gpios(struct gs_panel *ctx)
 	} else if (IS_ERR(gpio->reset_gpio)) {
 		dev_err(dev, "failed to get reset-gpios %ld\n", PTR_ERR(gpio->reset_gpio));
 		return PTR_ERR(gpio->reset_gpio);
+	} else {
+		/* Preserve the bootloader reset level while establishing output direction. */
+		ret = gpiod_get_value_cansleep(gpio->reset_gpio);
+		if (ret < 0) {
+			dev_err(dev, "failed to read reset GPIO: %d\n", ret);
+			return ret;
+		}
+		ret = gpiod_direction_output(gpio->reset_gpio, ret);
+		if (ret < 0) {
+			dev_err(dev, "failed to configure reset GPIO output: %d\n", ret);
+			return ret;
+		}
 	}
 
 	gpio->keep_reset_high = of_property_read_bool(dev->of_node, "keep-reset-high");

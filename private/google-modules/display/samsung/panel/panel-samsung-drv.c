@@ -258,6 +258,18 @@ static int exynos_panel_parse_gpios(struct exynos_panel *ctx)
 		return PTR_ERR(ctx->reset_gpio);
 	}
 
+	/* Preserve the bootloader reset level while establishing output direction. */
+	ret = gpiod_get_value_cansleep(ctx->reset_gpio);
+	if (ret < 0) {
+		dev_err(dev, "failed to read reset GPIO: %d\n", ret);
+		return ret;
+	}
+	ret = gpiod_direction_output(ctx->reset_gpio, ret);
+	if (ret < 0) {
+		dev_err(dev, "failed to configure reset GPIO output: %d\n", ret);
+		return ret;
+	}
+
 	ctx->enable_gpio = devm_gpiod_get(dev, "enable", GPIOD_OUT_LOW);
 	if (IS_ERR(ctx->enable_gpio))
 		ctx->enable_gpio = NULL;
